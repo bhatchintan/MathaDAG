@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MathaDAG - Mathematics Paper Dependency Graph</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .input-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #graph {
+            width: 100%;
+            height: 600px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        #error {
+            display: none;
+            background: #fee;
+            border: 1px solid #fcc;
+            padding: 15px;
+            border-radius: 4px;
+            color: #c00;
+            margin-bottom: 20px;
+        }
+        .info {
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MathaDAG - Mathematics Paper Dependency Graph</h1>
+        
+        <div class="info">
+            <strong>Instructions:</strong> Enter a DOI (e.g., 10.19086/da.609) to visualize the dependency graph of a mathematics paper. 
+            The graph shows only actual dependencies - papers whose results are used for proofs, definitions, or theorems.
+        </div>
+        
+        <div class="input-section">
+            <div class="input-group">
+                <input type="text" id="doiInput" placeholder="Enter DOI (e.g., 10.19086/da.609)" value="">
+                <button id="analyzeBtn" onclick="analyzePaper()">Analyze Paper</button>
+            </div>
+        </div>
+        
+        <div id="error"></div>
+        <div id="loading">
+            <p>Loading paper dependencies... This may take a minute.</p>
+            <p><small>Analyzing references to identify true dependencies...</small></p>
+        </div>
+        
+        <div id="graph"></div>
+        
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #ff6b6b;"></div>
+                <span>Root Paper</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #4ecdc4;"></div>
+                <span>Direct Dependency</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #45b7d1;"></div>
+                <span>Secondary Dependency</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: white; border-color: #2e7d32; border-width: 3px;"></div>
+                <span>Full Text Available</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let network = null;
+        
+        async function analyzePaper() {
+            const doi = document.getElementById('doiInput').value.trim();
+            if (!doi) {
+                showError('Please enter a DOI');
+                return;
+            }
+            
+            const button = document.getElementById('analyzeBtn');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            
+            button.disabled = true;
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            
+            try {
+                const response = await fetch('/analyze_paper', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ doi: doi })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to analyze paper');
+                }
+                
+                const data = await response.json();
+                displayGraph(data);
+                
+            } catch (err) {
+                showError(err.message);
+            } finally {
+                button.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+        
+        function showError(message) {
+            const error = document.getElementById('error');
+            error.textContent = 'Error: ' + message;
+            error.style.display = 'block';
+        }
+        
+        function displayGraph(data) {
+            const container = document.getElementById('graph');
+            
+            // Create nodes
+            const nodes = new vis.DataSet(data.nodes.map(node => ({
+                id: node.id,
+                label: node.label,
+                title: `<strong>${node.title}</strong><br>` +
+                       `<em>Year:</em> ${node.year}<br>` +
+                       `<em>Authors:</em> ${node.authors}<br>` +
+                       `<em>Full text:</em> ${node.has_full_text ? '✓ Available (' + node.content_source + ')' : '✗ Not available'}`,
+                color: {
+                    background: node.level === 0 ? '#ff6b6b' : 
+                               node.level === 1 ? '#4ecdc4' : '#45b7d1',
+                    border: node.has_full_text ? '#2e7d32' : '#333',
+                    highlight: {
+                        background: node.level === 0 ? '#ff5252' : 
+                                   node.level === 1 ? '#26a69a' : '#0288d1',
+                        border: '#000'
+                    }
+                },
+                borderWidth: node.has_full_text ? 3 : 1,
+                shape: node.level === 0 ? 'star' : 'dot',
+                size: node.level === 0 ? 30 : 20,
+                font: {
+                    size: node.level === 0 ? 16 : 14,
+                    color: '#333'
+                }
+            })));
+            
+            // Create edges
+            const edges = new vis.DataSet(data.edges.map(edge => ({
+                from: edge.from,
+                to: edge.to,
+                arrows: 'to',
+                title: edge.title || 'Dependency',
+                label: edge.label || '',
+                color: {
+                    color: '#999',
+                    highlight: '#333'
+                },
+                width: 2,
+                font: {
+                    size: 12,
+                    color: '#666',
+                    background: 'white',
+                    strokeWidth: 2,
+                    strokeColor: 'white'
+                },
+                smooth: {
+                    type: 'continuous',
+                    roundness: 0.5
+                }
+            })));
+            
+            // Network options
+            const options = {
+                physics: {
+                    enabled: true,
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        centralGravity: 0.3,
+                        springLength: 150,
+                        springConstant: 0.04,
+                        damping: 0.09
+                    }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    navigationButtons: true,
+                    keyboard: true
+                },
+                layout: {
+                    improvedLayout: true,
+                    hierarchical: false
+                }
+            };
+            
+            // Create network
+            const graphData = {
+                nodes: nodes,
+                edges: edges
+            };
+            
+            if (network) {
+                network.destroy();
+            }
+            
+            network = new vis.Network(container, graphData, options);
+            
+            // Stop physics after stabilization
+            network.on("stabilizationIterationsDone", function () {
+                network.setOptions({ physics: false });
+            });
+        }
+        
+        // Allow Enter key to submit
+        document.getElementById('doiInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                analyzePaper();
+            }
+        });
+    </script>
+</body>
+</html>
